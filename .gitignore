@@ -1,0 +1,8 @@
+node_modules/
+.npm-cache/
+.wrangler/
+.DS_Store
+check-cloudflare.mjs
+.env
+.env.*
+.dev.vars

@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "mandelbrot",
+  "compatibility_date": "2026-11-26",
+  "assets": { "directory": "./dist" },
+  "routes": [{ "pattern": "mandelbrot.fahru.me", "custom_domain": true }],
+  "workers_dev": true
+}
