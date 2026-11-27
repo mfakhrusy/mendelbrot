@@ -7,6 +7,13 @@ import { createRenderer } from './renderer.js';
 
 const INITIAL = { x: '-0.7482409297559107', y: '0.13646638958862622', depth: 7.5 };
 const ITERATIONS = 900;
+// Outside the guided descent the escape budget grows with depth: pixels near
+// the edge of the set need ever more iterations before they resolve.
+const ITERATIONS_PER_DEPTH = 400;
+const MAX_ITERATIONS = 16000;
+// While the view is moving, a quarter of the budget keeps frames quick; the
+// full budget is drawn once the view has been still for this long.
+const SETTLE_MS = 180;
 const MIN_DEPTH = -1;
 const STATS_INTERVAL_MS = 250;
 
@@ -22,11 +29,18 @@ let orbit = null, pending = null, requestId = 0, stale = false;
 
 let failure = null, contextLost = false;
 let needsDraw = true, lastTime = 0, lastStats = 0, frames = 0, skipped = 0;
+let lastInput = 0, drawnBudget = 0;
 let renderer, quality, worker;
 
 function fail(message) {
   failure = message;
   showError(message);
+}
+
+function fullBudget() {
+  if (guided) return ITERATIONS;
+  const wanted = ITERATIONS + ITERATIONS_PER_DEPTH * Math.max(0, depth);
+  return Math.min(MAX_ITERATIONS, Math.ceil(wanted / 1000) * 1000);
 }
 
 function precisionFor(d) {
@@ -56,8 +70,11 @@ function requestOrbit(periodic = guided) {
   }
   ensurePrecision();
   stale = false;
-  pending = { id: ++requestId, bits, depth, periodic };
-  worker.postMessage({ id: pending.id, x: cx, y: cy, bits, iterations: ITERATIONS, periodic });
+  // An ordinary orbit is computed for the full budget (it stops early if it
+  // escapes), so no pixel can outrun its reference.
+  const iterations = fullBudget();
+  pending = { id: ++requestId, bits, depth, periodic, iterations };
+  worker.postMessage({ id: pending.id, x: cx, y: cy, bits, iterations, periodic });
 }
 
 function restartOrbit() {
@@ -108,6 +125,7 @@ function onOrbit({ data: m }) {
     prefix: m.prefix,
     model: m.model,
     periodic: m.periodic,
+    exhausted: !m.periodic && m.length > request.iterations,
     ms: m.ms,
   };
   needsDraw = true;
@@ -118,12 +136,13 @@ function onOrbit({ data: m }) {
   } else refreshFreeOrbit(wasStale);
 }
 
-function currentFrame() {
-  return frameParams({ cx, cy, bits, depth, aspect: innerWidth / innerHeight, orbit, iterations: ITERATIONS });
+function currentFrame(iterations = fullBudget()) {
+  return frameParams({ cx, cy, bits, depth, aspect: innerWidth / innerHeight, orbit, iterations });
 }
 
-function draw() {
-  const frame = currentFrame();
+function draw(budget = fullBudget()) {
+  const frame = currentFrame(budget);
+  drawnBudget = budget;
   skipped = frame.skipped;
   renderer.draw(frame, palette);
   frames++;
@@ -145,9 +164,13 @@ function tick(now) {
     // only recomputed to give the camera centre more digits.
     if (!pending && (bits > orbit.precision || (!guided && depth - orbit.depth > 1))) requestOrbit();
   }
-  if (orbit && (needsDraw || animating)) {
-    draw();
-    quality.update(now, frameMs);
+  const full = fullBudget();
+  const moving = animating || dragging || now - lastInput < SETTLE_MS;
+  const budget = moving ? Math.max(ITERATIONS, full / 4) : full;
+  if (orbit && (needsDraw || animating || drawnBudget !== budget)) {
+    draw(budget);
+    // A settled frame is a one-off and says nothing about interactive speed.
+    if (moving) quality.update(now, frameMs);
   }
   if (now - lastStats > STATS_INTERVAL_MS) {
     updateMagnification(depth);
@@ -176,6 +199,7 @@ function pan(dx, dy) {
   ensurePrecision();
   cx += offsetInteger(dx, 2 - depth, bits);
   cy += offsetInteger(dy, 2 - depth, bits);
+  lastInput = performance.now();
   needsDraw = true;
 }
 
@@ -217,6 +241,7 @@ const actions = {
     if (!orbit) return;
     const before = depth;
     depth = Math.max(MIN_DEPTH, depth + change);
+    lastInput = performance.now();
     ensurePrecision();
     if (!guided) {
       if (anchor) {
@@ -269,8 +294,8 @@ function start() {
   window.fractal = {
     state: () => ({
       depth, bits, speed, playing, guided, frames, skipped,
-      iterations: ITERATIONS + skipped,
-      gpuIterations: ITERATIONS,
+      iterations: drawnBudget + skipped,
+      gpuIterations: drawnBudget,
       recursiveLevel: orbit?.model ? Math.max(0, Math.floor((skipped - orbit.model.preperiod) / orbit.model.period)) : 0,
       pending: !!pending,
       orbitLength: orbit?.length,

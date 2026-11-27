@@ -44,6 +44,9 @@ export function frameParams({ cx, cy, bits, depth, aspect, orbit, iterations }) 
   }
 
   const periodic = orbit.periodic;
+  // A finite reference that never escaped cannot carry pixels past its own
+  // end, so the frame stops there rather than continue in single floats.
+  if (orbit.exhausted) iterations = Math.max(1, Math.min(iterations, orbit.length - 1 - skipped));
   return {
     aspect,
     exponent,
