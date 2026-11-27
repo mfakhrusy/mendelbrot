@@ -3,14 +3,17 @@ import vertexSource from './shaders/fractal.vert?raw';
 
 const ORBIT_WIDTH = 1024;
 const PROBE_SIZE = 80;
+const MASK_DIVISOR = 8;
+const MODE = { draw: 0, probe: 1, mask: 2 };
 const UNIFORMS = [
   'uOrbit', 'uResolution', 'uAspect', 'uExponent', 'uFraction', 'uOffset', 'uDerivative',
   'uDeltaExponent', 'uIterations', 'uStart', 'uSkipped', 'uPreperiod', 'uWrap', 'uLast',
-  'uProbe', 'uPalette', 'uColorPhase',
+  'uMode', 'uPalette', 'uColorPhase', 'uMask', 'uMaskTexel',
 ];
 
 // Owns the WebGL 2 context: one full-screen triangle, the reference-orbit
-// texture, and a small offscreen target used by the diagnostic probe.
+// texture, the low-resolution interior mask, and a small offscreen target
+// used by the diagnostic probe.
 export function createRenderer(canvas, { onLost, onRestored }) {
   const gl = canvas.getContext('webgl2', {
     alpha: false,
@@ -22,6 +25,7 @@ export function createRenderer(canvas, { onLost, onRestored }) {
   if (!gl) return null;
 
   let uniforms, orbitTexture, probeFramebuffer, timer, query = null;
+  let maskTexture, maskFramebuffer, blankTexture, maskWidth = 0, maskHeight = 0;
   let orbitData = null;
   let gpuMs = 0;
   const probePixels = new Uint8Array(PROBE_SIZE * PROBE_SIZE * 4);
@@ -69,6 +73,17 @@ export function createRenderer(canvas, { onLost, onRestored }) {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, probeTexture, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
+    // The mask is sampled with linear filtering so one tap covers four texels.
+    maskTexture = nearestTexture();
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    maskFramebuffer = gl.createFramebuffer();
+    maskWidth = maskHeight = 0;
+    // Stands in for the mask while it is being rendered or is not wanted.
+    blankTexture = nearestTexture();
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+    gl.uniform1i(uniforms.uMask, 1);
+
     gl.activeTexture(gl.TEXTURE0);
     orbitTexture = nearestTexture();
     gl.uniform1i(uniforms.uOrbit, 0);
@@ -89,7 +104,25 @@ export function createRenderer(canvas, { onLost, onRestored }) {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, ORBIT_WIDTH, rows, 0, gl.RGBA, gl.FLOAT, packed);
   }
 
-  function configure(width, height, frame, palette, probe) {
+  function sizeMask() {
+    const width = Math.ceil(canvas.width / MASK_DIVISOR), height = Math.ceil(canvas.height / MASK_DIVISOR);
+    if (width === maskWidth && height === maskHeight) return;
+    maskWidth = width;
+    maskHeight = height;
+    gl.bindTexture(gl.TEXTURE_2D, maskTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, maskFramebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, maskTexture, 0);
+    gl.bindTexture(gl.TEXTURE_2D, orbitTexture);
+  }
+
+  function bindMask(texture) {
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.activeTexture(gl.TEXTURE0);
+  }
+
+  function configure(width, height, frame, palette, mode) {
     gl.uniform2f(uniforms.uResolution, width, height);
     gl.uniform1f(uniforms.uAspect, frame.aspect);
     gl.uniform1f(uniforms.uExponent, frame.exponent);
@@ -103,7 +136,7 @@ export function createRenderer(canvas, { onLost, onRestored }) {
     gl.uniform1i(uniforms.uPreperiod, frame.preperiod);
     gl.uniform1i(uniforms.uWrap, frame.wrap);
     gl.uniform1i(uniforms.uLast, frame.last);
-    gl.uniform1i(uniforms.uProbe, probe);
+    gl.uniform1i(uniforms.uMode, mode);
     gl.uniform1i(uniforms.uPalette, palette);
     gl.uniform2f(uniforms.uColorPhase, frame.colorPhase[0], frame.colorPhase[1]);
   }
@@ -159,17 +192,28 @@ export function createRenderer(canvas, { onLost, onRestored }) {
         query = gl.createQuery();
         gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
       }
+      // Interior mask first, at 1/64 of the pixels.
+      sizeMask();
+      bindMask(blankTexture);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, maskFramebuffer);
+      gl.viewport(0, 0, maskWidth, maskHeight);
+      configure(maskWidth, maskHeight, frame, palette, MODE.mask);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      bindMask(maskTexture);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, canvas.width, canvas.height);
-      configure(canvas.width, canvas.height, frame, palette, 0);
+      gl.uniform2f(uniforms.uMaskTexel, 1 / maskWidth, 1 / maskHeight);
+      configure(canvas.width, canvas.height, frame, palette, MODE.draw);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       if (measure) gl.endQuery(timer.TIME_ELAPSED_EXT);
     },
     // Escape counts on a small grid: (low byte, high byte, escaped flag).
     probe(frame) {
+      bindMask(blankTexture);
       gl.bindFramebuffer(gl.FRAMEBUFFER, probeFramebuffer);
       gl.viewport(0, 0, PROBE_SIZE, PROBE_SIZE);
-      configure(PROBE_SIZE, PROBE_SIZE, frame, 0, 1);
+      configure(PROBE_SIZE, PROBE_SIZE, frame, 0, MODE.probe);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.readPixels(0, 0, PROBE_SIZE, PROBE_SIZE, gl.RGBA, gl.UNSIGNED_BYTE, probePixels);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);

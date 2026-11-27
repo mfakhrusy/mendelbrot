@@ -1,6 +1,9 @@
 import { relative } from './math/fixed.js';
 import { recursiveFrame } from './math/recursive-zoom.js';
 
+// Mirrors DIRECT_FROM in the shader: views this large skip perturbation.
+const DIRECT_FROM = -8;
+
 // Everything the shader needs for one frame, derived from the camera and the
 // current reference orbit. Pure, so tests can drive it without a GPU.
 //
@@ -15,7 +18,9 @@ export function frameParams({ cx, cy, bits, depth, aspect, orbit, iterations }) 
   const radius = Math.hypot(fraction * aspect * 0.5 + Math.abs(ox), fraction * 0.5 + Math.abs(oy));
 
   let start = 0, skipped = 0, dr = 0, di = 0, de = 0;
-  if (orbit.model) {
+  if (exponent >= DIRECT_FROM) {
+    // Shallow views are iterated directly from the first step.
+  } else if (orbit.model) {
     const frame = recursiveFrame(orbit.model, exponent, radius);
     start = frame.start;
     skipped = frame.skipped;

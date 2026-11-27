@@ -14,6 +14,12 @@ precision highp int;
 // Pixels inside the set would otherwise burn the whole iteration budget, so
 // two exact shortcuts end them early: the closed-form main cardioid and
 // period-2 disc on shallow views, and cycle detection in the direct stage.
+// Views large enough for single floats skip perturbation altogether.
+//
+// The frame is drawn twice: first into a mask at 1/8 resolution that records
+// which samples are inside the set, then at full size, where a pixel whose
+// whole mask neighbourhood is inside is filled without iterating. Only the
+// band along the set's edge pays for interior pixels.
 // tests/shader-emulation.js mirrors this file line for line; keep them in sync.
 
 uniform sampler2D uOrbit;      // reference Z_n as (re hi, re lo, im hi, im lo)
@@ -25,7 +31,9 @@ uniform vec2 uOffset;
 uniform vec2 uDerivative;      // initial delta = uDerivative * dcm * 2^uDeltaExponent
 uniform float uDeltaExponent;
 uniform int uIterations, uStart, uSkipped, uPreperiod, uWrap, uLast;
-uniform int uProbe, uPalette;
+uniform int uMode, uPalette;   // uMode: 0 draw, 1 probe, 2 interior mask
+uniform sampler2D uMask;
+uniform vec2 uMaskTexel;
 uniform vec2 uColorPhase;
 out vec4 fragColor;
 
@@ -36,6 +44,19 @@ const float TINY = 1. / 4096.;
 const float HUGE = 4096.;
 // Views at least this large resolve c as a plain float.
 const float SHALLOW = -16.;
+// Views at least this large are iterated directly from the first step.
+const float DIRECT_FROM = -8.;
+const vec4 INSIDE_COLOR = vec4(.012, .018, .030, 1.);
+
+// True when every mask sample within about two mask texels is inside.
+bool solidInterior(vec2 uv) {
+  vec2 o = uMaskTexel;
+  float a = texture(uMask, uv + vec2(-o.x, -o.y)).r;
+  float b = texture(uMask, uv + vec2(o.x, -o.y)).r;
+  float c = texture(uMask, uv + vec2(-o.x, o.y)).r;
+  float d = texture(uMask, uv + o).r;
+  return min(min(a, b), min(c, d)) > .999;
+}
 
 bool insideMainBody(vec2 c) {
   float x = c.x - .25, y2 = c.y * c.y;
@@ -72,7 +93,12 @@ vec3 palette(float t) {
 }
 
 void main() {
-  vec2 pixel = (gl_FragCoord.xy / uResolution - .5) * vec2(uAspect, 1.);
+  vec2 uv = gl_FragCoord.xy / uResolution;
+  if (uMode == 0 && solidInterior(uv)) {
+    fragColor = INSIDE_COLOR;
+    return;
+  }
+  vec2 pixel = (uv - .5) * vec2(uAspect, 1.);
   vec2 dcm = pixel * uFraction + uOffset;
 
   // c as a plain float, for the direct stage. Orbit entry 1 is the reference c.
@@ -89,7 +115,7 @@ void main() {
   vec2 z = vec2(0.);
   float magnitude = 0.;
   int count = uIterations;
-  bool direct = false;
+  bool direct = uExponent >= DIRECT_FROM;
   // Cycle detection: remember z at doubling intervals. A float orbit that
   // returns to the exact same value repeats forever, so it never escapes.
   vec2 marked = vec2(0.);
@@ -142,13 +168,17 @@ void main() {
   }
 
   bool inside = count == uIterations;
-  if (uProbe == 1) {
+  if (uMode == 2) {
+    fragColor = vec4(inside ? 1. : 0.);
+    return;
+  }
+  if (uMode == 1) {
     int total = min(65535, count + uSkipped);
     fragColor = vec4(float(total % 256) / 255., float(total / 256) / 255., inside ? 0. : 1., 1.);
     return;
   }
   if (inside) {
-    fragColor = vec4(.012, .018, .030, 1.);
+    fragColor = INSIDE_COLOR;
     return;
   }
   float smoothCount = float(count) + 1. - log2(max(1., log2(max(magnitude, 1.)) * .5));

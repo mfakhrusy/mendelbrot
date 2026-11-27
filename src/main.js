@@ -147,7 +147,7 @@ function tick(now) {
   }
   if (orbit && (needsDraw || animating)) {
     draw();
-    if (animating || dragging) quality.update(now, frameMs);
+    quality.update(now, frameMs);
   }
   if (now - lastStats > STATS_INTERVAL_MS) {
     updateMagnification(depth);

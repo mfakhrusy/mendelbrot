@@ -4,7 +4,7 @@
 const f = Math.fround;
 const ESCAPE = 256, DIRECT = 1 / 4096, TINY = 1 / 4096, HUGE = 4096;
 
-const SHALLOW = -16;
+const SHALLOW = -16, DIRECT_FROM = -8;
 const insideMainBody = (c) => {
   const x = f(c[0] - 0.25), y2 = f(c[1] * c[1]);
   const q = f(f(x * x) + y2);
@@ -50,7 +50,7 @@ export function shadePixel(params, data, pixel) {
 
   let j = params.start;
   let Z = [data[4 * j], data[4 * j + 2]];
-  let z = [0, 0], magnitude = 0, direct = false;
+  let z = [0, 0], magnitude = 0, direct = E >= DIRECT_FROM;
   let stats = { perturbed: 0, direct: 0, rebases: 0 };
   let marked = [0, 0], untilMark = 8, markEvery = 8;
   const limit = E > SHALLOW && insideMainBody(c) ? 0 : params.iterations;
