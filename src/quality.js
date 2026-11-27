@@ -48,7 +48,7 @@ export function createQuality(renderer, onResize) {
         const gpuMs = renderer.gpuMs();
         if (!gpuMs) return;
         // Cost scales with pixel count, so aim straight for the budget.
-        if (gpuMs > 11) change(Math.max(0.6, Math.sqrt(8 / gpuMs)), now);
+        if (gpuMs > 11) change(Math.sqrt(8 / gpuMs), now);
         else if (gpuMs < 5 && scale < 1) change(Math.min(1.25, Math.sqrt(7 / gpuMs)), now);
       } else {
         // No GPU timer (Safari, Firefox): back off after sustained slow frames.

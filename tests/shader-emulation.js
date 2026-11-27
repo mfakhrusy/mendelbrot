@@ -4,6 +4,14 @@
 const f = Math.fround;
 const ESCAPE = 256, DIRECT = 1 / 4096, TINY = 1 / 4096, HUGE = 4096;
 
+const SHALLOW = -16;
+const insideMainBody = (c) => {
+  const x = f(c[0] - 0.25), y2 = f(c[1] * c[1]);
+  const q = f(f(x * x) + y2);
+  const disc = f(f(f(c[0] + 1) * f(c[0] + 1)) + y2);
+  return f(q * f(q + x)) < f(0.25 * y2) || disc < 0.0625;
+};
+
 const cmul = (a, b) => [
   f(f(a[0] * b[0]) - f(a[1] * b[1])),
   f(f(a[0] * b[1]) + f(a[1] * b[0])),
@@ -44,8 +52,10 @@ export function shadePixel(params, data, pixel) {
   let Z = [data[4 * j], data[4 * j + 2]];
   let z = [0, 0], magnitude = 0, direct = false;
   let stats = { perturbed: 0, direct: 0, rebases: 0 };
+  let marked = [0, 0], untilMark = 8, markEvery = 8;
+  const limit = E > SHALLOW && insideMainBody(c) ? 0 : params.iterations;
 
-  for (let i = 0; i < params.iterations; i++) {
+  for (let i = 0; i < limit; i++) {
     if (direct) {
       stats.direct++;
       z = [
@@ -54,6 +64,12 @@ export function shadePixel(params, data, pixel) {
       ];
       magnitude = f(f(z[0] * z[0]) + f(z[1] * z[1]));
       if (magnitude > ESCAPE) return { count: i + 1, magnitude, stats };
+      if (z[0] === marked[0] && z[1] === marked[1]) break;
+      if (--untilMark === 0) {
+        marked = z;
+        markEvery *= 2;
+        untilMark = markEvery;
+      }
       continue;
     }
     stats.perturbed++;

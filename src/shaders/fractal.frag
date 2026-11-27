@@ -11,6 +11,9 @@ precision highp int;
 //   2. Direct: once delta is no longer small, z = Z + delta is an ordinary
 //      number and plain z^2 + c in single floats is both exact enough and
 //      several times cheaper.
+// Pixels inside the set would otherwise burn the whole iteration budget, so
+// two exact shortcuts end them early: the closed-form main cardioid and
+// period-2 disc on shallow views, and cycle detection in the direct stage.
 // tests/shader-emulation.js mirrors this file line for line; keep them in sync.
 
 uniform sampler2D uOrbit;      // reference Z_n as (re hi, re lo, im hi, im lo)
@@ -31,6 +34,14 @@ const float ESCAPE = 256.;
 const float DIRECT = 1. / 4096.;
 const float TINY = 1. / 4096.;
 const float HUGE = 4096.;
+// Views at least this large resolve c as a plain float.
+const float SHALLOW = -16.;
+
+bool insideMainBody(vec2 c) {
+  float x = c.x - .25, y2 = c.y * c.y;
+  float q = x * x + y2;
+  return q * (q + x) < .25 * y2 || (c.x + 1.) * (c.x + 1.) + y2 < .0625;
+}
 
 vec2 cmul(vec2 a, vec2 b) {
   return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
@@ -79,12 +90,23 @@ void main() {
   float magnitude = 0.;
   int count = uIterations;
   bool direct = false;
+  // Cycle detection: remember z at doubling intervals. A float orbit that
+  // returns to the exact same value repeats forever, so it never escapes.
+  vec2 marked = vec2(0.);
+  int untilMark = 8, markEvery = 8;
+  int limit = uExponent > SHALLOW && insideMainBody(c) ? 0 : uIterations;
 
-  for (int i = 0; i < uIterations; i++) {
+  for (int i = 0; i < limit; i++) {
     if (direct) {
       z = vec2(z.x * z.x - z.y * z.y, 2. * z.x * z.y) + c;
       magnitude = dot(z, z);
       if (magnitude > ESCAPE) { count = i + 1; break; }
+      if (z == marked) break;
+      if (--untilMark == 0) {
+        marked = z;
+        markEvery *= 2;
+        untilMark = markEvery;
+      }
       continue;
     }
 

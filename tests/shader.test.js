@@ -91,3 +91,15 @@ test('dragging away from the guided reference stays exact', (t) => {
   const result = compare({ cx, cy, bits, depth, orbit, grid: 12 });
   check(result);
 });
+
+for (const [x, y, depth] of [['-0.5', '0', 0.2], ['-0.2', '0', 2], ['-1', '0.1', 3.5]]) {
+  test(`interior shortcuts keep shallow view ${x},${y} exact`, (t) => {
+    const bits = 192;
+    const cx = fromDecimal(x, bits), cy = fromDecimal(y, bits);
+    const { data, length, prefix } = referenceOrbit(cx, cy, bits, ITERATIONS);
+    const orbit = { x: cx, y: cy, data, length, prefix, periodic: null, model: null };
+    const result = compare({ cx, cy, bits, depth, orbit, grid: 14 });
+    check(result);
+    t.diagnostic(`stable ${result.stable.toFixed(3)} exact ${result.exact.toFixed(4)}`);
+  });
+}

@@ -47,20 +47,38 @@ function ensurePrecision() {
   bits = next;
 }
 
-function requestOrbit() {
+// Two kinds of reference: the boundary point's periodic orbit (the guided
+// destination, valid at any depth) or an ordinary orbit at the camera centre.
+function requestOrbit(periodic = guided) {
   if (pending) {
     stale = true;
     return;
   }
   ensurePrecision();
   stale = false;
-  pending = { id: ++requestId, bits, depth, guided };
-  worker.postMessage({ id: pending.id, x: cx, y: cy, bits, iterations: ITERATIONS, guided });
+  pending = { id: ++requestId, bits, depth, periodic };
+  worker.postMessage({ id: pending.id, x: cx, y: cy, bits, iterations: ITERATIONS, periodic });
 }
 
 function restartOrbit() {
   pending = null;
   requestOrbit();
+}
+
+// Free exploration near the boundary point keeps using its periodic orbit:
+// panning then needs no new reference at all. Only a camera that has moved
+// further away than float pixel offsets can express gets a local orbit.
+const PERIODIC_REACH = 512; // view heights
+function refreshFreeOrbit(force) {
+  if (!orbit) return;
+  if (orbit.periodic) {
+    const [ox, oy] = currentFrame().offset;
+    if (Math.hypot(ox, oy) < PERIODIC_REACH) {
+      if (bits > orbit.precision) requestOrbit(true);
+      return;
+    }
+  }
+  if (force) requestOrbit(false);
 }
 
 function onOrbit({ data: m }) {
@@ -77,7 +95,7 @@ function onOrbit({ data: m }) {
   }
   // The automatic destination is an exact algebraic boundary point; the
   // worker returns it at the requested precision.
-  if (guided && request.guided) {
+  if (guided && request.periodic) {
     cx = x;
     cy = y;
   }
@@ -93,7 +111,11 @@ function onOrbit({ data: m }) {
     ms: m.ms,
   };
   needsDraw = true;
-  if (stale || guided !== request.guided) requestOrbit();
+  const wasStale = stale;
+  stale = false;
+  if (guided) {
+    if (!request.periodic || bits > orbit.precision) requestOrbit();
+  } else refreshFreeOrbit(wasStale);
 }
 
 function currentFrame() {
@@ -125,7 +147,7 @@ function tick(now) {
   }
   if (orbit && (needsDraw || animating)) {
     draw();
-    if (animating) quality.update(now, frameMs);
+    if (animating || dragging) quality.update(now, frameMs);
   }
   if (now - lastStats > STATS_INTERVAL_MS) {
     updateMagnification(depth);
@@ -164,7 +186,12 @@ const actions = {
     // Play always resumes the guided descent, at the current depth.
     if (!playing && !guided) {
       guided = true;
-      restartOrbit();
+      if (orbit?.periodic) {
+        pending = null;
+        cx = orbit.x;
+        cy = orbit.y;
+        if (bits > orbit.precision) requestOrbit();
+      } else restartOrbit();
     }
     setPlaying(!playing);
   },
@@ -182,7 +209,7 @@ const actions = {
   },
   endDrag() {
     dragging = false;
-    requestOrbit();
+    refreshFreeOrbit(true);
     needsDraw = true;
   },
   // `anchor` is the point (in view heights from the centre) to keep fixed.
@@ -196,7 +223,7 @@ const actions = {
         const factor = 2 ** (depth - before) - 1;
         pan(anchor.x * factor, anchor.y * factor);
       }
-      requestOrbit();
+      refreshFreeOrbit(true);
     } else if (bits > orbit.precision) requestOrbit();
     needsDraw = true;
   },

@@ -10,12 +10,12 @@ self.onmessage = ({ data: m }) => {
     const started = performance.now();
     let { x, y } = m;
     let periodic = null;
-    if (m.guided) {
+    if (m.periodic) {
       boundary = solveBoundary(m.bits, boundary);
       ({ x, y } = boundary);
       periodic = { preperiod: PREPERIOD, period: PERIOD };
     }
-    // A guided orbit only needs the preperiod plus one cycle, however deep.
+    // The boundary point's orbit only needs the preperiod plus one cycle, however deep.
     const count = periodic ? PREPERIOD + PERIOD : m.iterations;
     const result = referenceOrbit(x, y, m.bits, count, periodic);
     const model = periodic ? cycleModel(result.data, PREPERIOD, PERIOD) : null;
