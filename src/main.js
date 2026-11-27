@@ -1,9 +1,9 @@
 import { frameParams } from './frame.js';
 import { clearError, showError, syncPlayButton, updateMagnification } from './hud.js';
 import { bindInput } from './input.js';
-import { fromDecimal, offsetInteger } from './math/fixed.js';
+import { fromDecimal, offsetInteger, relative } from './math/fixed.js';
 import { createQuality } from './quality.js';
-import { createRenderer } from './renderer.js';
+import { createRenderer, TILE_COUNT } from './renderer.js';
 
 const INITIAL = { x: '-0.7482409297559107', y: '0.13646638958862622', depth: 7.5 };
 const ITERATIONS = 900;
@@ -11,9 +11,6 @@ const ITERATIONS = 900;
 // the edge of the set need ever more iterations before they resolve.
 const ITERATIONS_PER_DEPTH = 400;
 const MAX_ITERATIONS = 16000;
-// While the view is moving, a quarter of the budget keeps frames quick; the
-// full budget is drawn once the view has been still for this long.
-const SETTLE_MS = 180;
 const MIN_DEPTH = -1;
 const STATS_INTERVAL_MS = 250;
 
@@ -28,8 +25,10 @@ let guided = true, dragging = false, palette = 0, speed = 0.3;
 let orbit = null, pending = null, requestId = 0, stale = false;
 
 let failure = null, contextLost = false;
-let needsDraw = true, lastTime = 0, lastStats = 0, frames = 0, skipped = 0;
-let lastInput = 0, drawnBudget = 0;
+let needsDraw = true, lastTime = 0, lastStats = 0, frames = 0, skipped = 0, drawnBudget = 0;
+// The image being rendered ({ frame, palette, orbit, view, next }) and the
+// view ({ cx, cy, bits, depth }) the last finished image was rendered for.
+let job = null, cachedView = null, drewTiles = false;
 let renderer, quality, worker;
 
 function fail(message) {
@@ -116,9 +115,11 @@ function onOrbit({ data: m }) {
     cx = x;
     cy = y;
   }
-  renderer.setOrbit(m.data);
+  const previous = orbit;
   orbit = {
     x, y,
+    data: m.data,
+    texture: contextLost ? null : renderer.createOrbit(m.data),
     precision: request.bits,
     depth: request.depth,
     length: m.length,
@@ -128,6 +129,7 @@ function onOrbit({ data: m }) {
     exhausted: !m.periodic && m.length > request.iterations,
     ms: m.ms,
   };
+  releaseOrbit(previous);
   needsDraw = true;
   const wasStale = stale;
   stale = false;
@@ -136,17 +138,72 @@ function onOrbit({ data: m }) {
   } else refreshFreeOrbit(wasStale);
 }
 
-function currentFrame(iterations = fullBudget()) {
-  return frameParams({ cx, cy, bits, depth, aspect: innerWidth / innerHeight, orbit, iterations });
+function currentFrame() {
+  return frameParams({ cx, cy, bits, depth, aspect: innerWidth / innerHeight, orbit, iterations: fullBudget() });
 }
 
-function draw(budget = fullBudget()) {
-  const frame = currentFrame(budget);
-  drawnBudget = budget;
-  skipped = frame.skipped;
-  renderer.draw(frame, palette);
-  frames++;
-  needsDraw = false;
+// An orbit's texture lives until neither the camera nor a job uses it.
+function releaseOrbit(old) {
+  if (old?.texture && old !== orbit && old !== job?.orbit) {
+    renderer.deleteOrbit(old.texture);
+    old.texture = null;
+  }
+}
+
+function endJob() {
+  const finished = job;
+  job = null;
+  releaseOrbit(finished.orbit);
+}
+
+// How to place an image rendered for `view` under the current camera:
+// [scale, offsetX, offsetY] in the image's texture coordinates, or null when
+// the two views are too far apart for the image to be of any use.
+function placement(view) {
+  if (!view || view.bits > bits) return null;
+  const zoom = view.depth - depth;
+  if (Math.abs(zoom) > 6) return null;
+  const shift = BigInt(bits - view.bits);
+  const exponent = Math.floor(2 - view.depth);
+  const toHeights = 2 ** (exponent - (2 - view.depth));
+  const ox = relative(cx - (view.cx << shift), bits, exponent) * toHeights;
+  const oy = relative(cy - (view.cy << shift), bits, exponent) * toHeights;
+  if (!(Math.hypot(ox, oy) < 4)) return null;
+  return [2 ** zoom, ox / (innerWidth / innerHeight), oy];
+}
+
+// Renders the current view into an offscreen image. During the guided descent
+// that is one whole image per frame. Otherwise an image is drawn a few tiles
+// per frame at full quality, while the screen keeps showing the last finished
+// one, moved and scaled to follow the camera.
+function render(animating) {
+  drewTiles = false;
+  if (job && !placement(job.view)) endJob();
+  if (!job && (needsDraw || animating)) {
+    const frame = currentFrame();
+    job = { frame, palette, orbit, view: { cx, cy, bits, depth }, next: 0 };
+    skipped = frame.skipped;
+    drawnBudget = frame.iterations;
+    needsDraw = false;
+  }
+  if (job) {
+    const left = TILE_COUNT - job.next;
+    const count = animating ? left : Math.min(left, quality.tiles());
+    // A job's first frame also draws the mask, so it is not a fair sample of
+    // tile cost unless it is the whole image.
+    renderer.beginFrame(job.next > 0 || count === TILE_COUNT ? count : null);
+    if (job.next === 0) renderer.beginJob(job.frame, job.orbit.texture);
+    renderer.drawTiles(job.frame, job.palette, job.orbit.texture, job.next, job.next + count);
+    renderer.endFrame();
+    job.next += count;
+    drewTiles = true;
+    if (job.next === TILE_COUNT) {
+      renderer.finishJob();
+      cachedView = job.view;
+      endJob();
+      frames++;
+    }
+  }
 }
 
 function tick(now) {
@@ -154,7 +211,6 @@ function tick(now) {
   const frameMs = now - (lastTime || now);
   lastTime = now;
   if (failure || contextLost || document.hidden || !innerWidth || !innerHeight) return;
-  quality.sync();
 
   const animating = orbit && playing && !dragging;
   if (animating) {
@@ -164,13 +220,14 @@ function tick(now) {
     // only recomputed to give the camera centre more digits.
     if (!pending && (bits > orbit.precision || (!guided && depth - orbit.depth > 1))) requestOrbit();
   }
-  const full = fullBudget();
-  const moving = animating || dragging || now - lastInput < SETTLE_MS;
-  const budget = moving ? Math.max(ITERATIONS, full / 4) : full;
-  if (orbit && (needsDraw || animating || drawnBudget !== budget)) {
-    draw(budget);
-    // A settled frame is a one-off and says nothing about interactive speed.
-    if (moving) quality.update(now, frameMs);
+  quality.sync();
+  if (orbit?.texture) {
+    // The previous frame's tiles decide how many this one can afford.
+    if (drewTiles && !animating) quality.updateTiles(frameMs);
+    const moved = needsDraw;
+    render(animating);
+    if (moved || drewTiles) renderer.present(placement(cachedView), job ? placement(job.view) : null);
+    if (animating) quality.updateScale(now, frameMs);
   }
   if (now - lastStats > STATS_INTERVAL_MS) {
     updateMagnification(depth);
@@ -190,16 +247,22 @@ function reset(startPlaying = true) {
   cy = fromDecimal(INITIAL.y, bits);
   depth = INITIAL.depth;
   guided = true;
-  orbit = null;
+  dropOrbit();
   restartOrbit();
   setPlaying(startPlaying ? true : playing);
 }
 
+function dropOrbit() {
+  const old = orbit;
+  orbit = null;
+  releaseOrbit(old);
+}
+
 function pan(dx, dy) {
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
   ensurePrecision();
   cx += offsetInteger(dx, 2 - depth, bits);
   cy += offsetInteger(dy, 2 - depth, bits);
-  lastInput = performance.now();
   needsDraw = true;
 }
 
@@ -241,7 +304,6 @@ const actions = {
     if (!orbit) return;
     const before = depth;
     depth = Math.max(MIN_DEPTH, depth + change);
-    lastInput = performance.now();
     ensurePrecision();
     if (!guided) {
       if (anchor) {
@@ -265,7 +327,11 @@ function start() {
       );
     },
     onRestored() {
+      // Every GPU resource is gone: re-upload the orbit and start over.
       contextLost = false;
+      job = null;
+      cachedView = null;
+      if (orbit) orbit.texture = renderer.createOrbit(orbit.data);
       clearError();
       needsDraw = true;
     },
@@ -278,10 +344,11 @@ function start() {
   worker.onerror = () => fail('The precision worker could not start. Reload to try again.');
   worker.onmessage = onOrbit;
 
-  // A resize clears the canvas, so repaint in the same task to avoid a flash.
+  // A resize discards both images; the frame loop repaints in the same task.
   quality = createQuality(renderer, () => {
-    if (orbit && !contextLost) draw();
-    else needsDraw = true;
+    if (job) endJob();
+    cachedView = null;
+    needsDraw = true;
   });
 
   bindInput(canvas, actions);
@@ -300,7 +367,9 @@ function start() {
       pending: !!pending,
       orbitLength: orbit?.length,
       referenceMs: orbit?.ms,
-      gpuMs: renderer.gpuMs(),
+      gpuMs: quality.gpuMs(),
+      tiles: quality.tiles(),
+      rendering: job ? job.next / TILE_COUNT : null,
       renderScale: quality.scale(),
       error: failure,
       width: canvas.width,
@@ -311,7 +380,7 @@ function start() {
     probe: () => {
       if (!orbit) return null;
       const frame = currentFrame();
-      const data = Array.from(renderer.probe(frame));
+      const data = Array.from(renderer.probe(frame, orbit.texture));
       needsDraw = true;
       return { size: renderer.probeSize, skipped: frame.skipped, exponent: frame.exponent, fraction: frame.fraction, data };
     },
@@ -321,7 +390,7 @@ function start() {
       cx = fromDecimal(x, bits);
       cy = fromDecimal(y, bits);
       guided = false;
-      orbit = null;
+      dropOrbit();
       restartOrbit();
     },
     seek: (d) => {
