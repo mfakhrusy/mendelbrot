@@ -1,0 +1,119 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+  color: #f1f2ed;
+  background: #090d12;
+  --mint: #a2e5cc;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  overflow: hidden;
+}
+button,
+select {
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+button:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 3px;
+}
+
+#fractal {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.controls {
+  position: fixed;
+  left: 50%;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border: 1px solid #c9e7dc25;
+  border-radius: 50px;
+  background: #101b22b8;
+  backdrop-filter: blur(18px);
+  white-space: nowrap;
+  transition: opacity 0.3s;
+}
+body.immersive .controls {
+  opacity: 0;
+  pointer-events: none;
+}
+.controls button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border: 0;
+  background: none;
+  color: #c7d7d9;
+}
+.controls button:hover,
+.controls .play {
+  color: var(--mint);
+}
+.controls svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.controls select {
+  border: 0;
+  background: transparent;
+  color: #e7ecea;
+  font-size: 12px;
+}
+.controls select option {
+  background: #13212b;
+}
+.palette-swatch {
+  display: block;
+  width: 15px;
+  height: 15px;
+  border: 1px solid #ffffff60;
+  border-radius: 50%;
+  background: conic-gradient(#88dbd0, #639ce8, #eaca7c, #88dbd0);
+}
+.separator {
+  width: 1px;
+  height: 18px;
+  background: #ffffff1c;
+}
+#magnification {
+  min-width: 78px;
+  color: #e7ecea;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+#error {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, 80vw);
+  padding: 28px;
+  border: 1px solid #b6d8cb55;
+  border-radius: 10px;
+  background: #101b23;
+  line-height: 1.6;
+}

@@ -1,18 +1,17 @@
 {
   "name": "mandelbrot",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
   "scripts": {
-    "dev": "python3 -m http.server 8787 --bind 127.0.0.1 --directory dist",
-    "deploy": "wrangler deploy",
-    "test": "node tests/math.test.js"
+    "dev": "vite",
+    "deploy": "npm test && vite build && wrangler deploy",
+    "test": "node --test",
+    "build": "vite build",
+    "preview": "vite preview"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "vite": "^8.4.0",
     "wrangler": "^4.168.0"
   }
 }

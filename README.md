@@ -21,6 +21,14 @@ Open http://127.0.0.1:8787 in a browser with WebGL 2 enabled.
 npm test
 ```
 
+## Build
+
+```sh
+npm run build
+```
+
+Source lives in `src/`; the build goes to `dist/`.
+
 ## Deploy to Cloudflare
 
 ```sh

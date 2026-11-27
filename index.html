@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#090d12" />
+    <meta name="description" content="Endless Mandelbrot zoom, computed live in your browser." />
+    <title>Mandelbrot</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b1119'/%3E%3Ccircle cx='37' cy='32' r='18' fill='%238ce5d3'/%3E%3Ccircle cx='16' cy='32' r='9' fill='%238ce5d3'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="fractal" aria-label="Mandelbrot fractal. Scroll to zoom, drag to pan."></canvas>
+    <div class="controls" aria-label="Simulation controls">
+      <button id="play" class="play" title="Pause (Space)" aria-label="Pause zoom">
+        <svg viewBox="0 0 24 24"><path d="M8 6v12M16 6v12" /></svg>
+      </button>
+      <select id="speed" title="Zoom speed" aria-label="Zoom speed">
+        <option value="0.15">0.5×</option>
+        <option value="0.3" selected>1×</option>
+        <option value="0.6">2×</option>
+        <option value="1.2">4×</option>
+      </select>
+      <button id="palette" title="Change colors" aria-label="Change colors">
+        <span class="palette-swatch"></span>
+      </button>
+      <button id="reset" title="Restart (R)" aria-label="Restart">
+        <svg viewBox="0 0 24 24"><path d="M4 10a8 8 0 1 1 2 8M4 4v6h6" /></svg>
+      </button>
+      <button id="fullscreen" title="Fullscreen (F)" aria-label="Fullscreen">
+        <svg viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5" /></svg>
+      </button>
+      <div class="separator"></div>
+      <output id="magnification" title="Magnification" aria-label="Magnification">1×</output>
+    </div>
+    <div id="error" role="alert" hidden></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
